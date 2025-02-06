@@ -3,6 +3,7 @@ var express = require('express');
 var https = require('https');
 var url = require('url');
 var path = require('path');
+var fs = require('fs');
 
 var api = require('./api.js');
 var blocked = require('./static/blocked.json');
@@ -26,7 +27,7 @@ var httpProxy = proxy.createProxyServer({
   changeOrigin: true
 });
 
-function stripSub (link) {
+function stripSub(link) {
   var original = url.parse(link);
   var sub = '';
   var path = original.path;
@@ -39,8 +40,8 @@ function stripSub (link) {
   return [path || '/', sub];
 }
 
-function getSubdomain (req, rewrite) {
-  var sub;
+function getSubdomain(req, rewrite) {
+  var sub = '';
   if (subdomainsAsPath) {
     var res = stripSub(req.url);
     if (rewrite) {
@@ -48,23 +49,22 @@ function getSubdomain (req, rewrite) {
     }
     sub = res[1];
   } else {
-    var domain = req.headers.host;
-    sub = domain.slice(0, domain.lastIndexOf('.', domain.lastIndexOf('.') - 1) + 1);
+    var domain = req.headers.host || '';
+    var parts = domain.split('.');
+    if (parts.length > 2) {
+      sub = parts[0] + '.';
+    }
   }
   return sub;
 }
 
-function onProxyError (err, req, res) {
-  console.error(err);
-
-  res.writeHead(500, {
-    'Content-Type': 'text/plain'
-  });
-
-  res.end('Proxying failed.');
+function onProxyError(err, req, res) {
+  console.error('Proxy Error:', err);
+  res.writeHead(500, { 'Content-Type': 'text/plain' });
+  res.end('Proxying failed: ' + err.message);
 }
 
-function onProxyReq (proxyReq, req, res, options) {
+function onProxyReq(proxyReq, req, res, options) {
   proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36');
   proxyReq.removeHeader('roblox-id');
 }
@@ -75,14 +75,15 @@ httpProxy.on('error', onProxyError);
 httpProxy.on('proxyReq', onProxyReq);
 
 var app = express();
+app.use(express.json()); // Fix for reading req.body
 
-app.use('/proxy', express.static('./static'));
+app.use('/proxy', express.static(path.join(__dirname, 'static')));
 app.use('/proxy', api);
 
 app.use(function (req, res, next) {
   if (serveHomepage && stripSub(req.url)[0] === '/') {
     if (serveHomepageOnAllSubdomains || !getSubdomain(req)) {
-      res.sendFile(path.join(__dirname, '/static/home.html'));
+      res.sendFile(path.join(__dirname, 'static', 'home.html'));
       return;
     }
   }
@@ -90,15 +91,13 @@ app.use(function (req, res, next) {
 });
 
 app.use(function (req, res, next) {
-  for (var i = 0; i < blocked.length; i++) {
-    if (req.url === blocked[i]) {
-      res.end('URL blocked.');
-      return;
-    }
+  if (blocked.includes(req.url)) {
+    res.status(403).end('URL blocked.');
+    return;
   }
-  for (i = 0; i < reBlocked.length; i++) {
-    if (req.url.match(reBlocked[i])) {
-      res.end('URL blocked.');
+  for (var i = 0; i < reBlocked.length; i++) {
+    if (req.url.match(new RegExp(reBlocked[i]))) {
+      res.status(403).end('URL blocked.');
       return;
     }
   }
@@ -106,7 +105,7 @@ app.use(function (req, res, next) {
 });
 
 app.use(function (req, res, next) {
-  console.log('PROXY REQUEST; HOST: ' + req.headers.host + '; URL: ' + req.url + '; OPT: ' + req.body + '; COOKIE: ' + req.headers.cookie + ';');
+  console.log(`PROXY REQUEST; HOST: ${req.headers.host}; URL: ${req.url}; COOKIE: ${req.headers.cookie}`);
   var subdomain = getSubdomain(req, true);
   var proto = subdomain === 'wiki.' ? 'http' : 'https';
   var options = {
@@ -114,19 +113,15 @@ app.use(function (req, res, next) {
   };
   if (proto === 'https') {
     httpsProxy.web(req, res, options);
-  } else if (proto === 'http') {
+  } else {
     httpProxy.web(req, res, options);
   }
 });
 
 app.use(function (err, req, res, next) {
-  console.error(err);
-
-  res.writeHead(500, {
-    'Content-Type': 'text/plain'
-  });
-
-  res.end('Proxy handler failed.');
+  console.error('Server Error:', err);
+  res.writeHead(500, { 'Content-Type': 'text/plain' });
+  res.end('Proxy handler failed: ' + err.message);
 });
 
 app.listen(port, function () {

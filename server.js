@@ -109,7 +109,7 @@ app.use(function (req, res, next) {
   var subdomain = getSubdomain(req, true);
   var proto = subdomain === 'wiki.' ? 'http' : 'https';
   var options = {
-    target: proto + '://' + (subdomain || 'www.') + 'roblox.com'
+    target: proto + '://' + (subdomain || 'www.') + 'mkseven1.com'
   };
   if (proto === 'https') {
     httpsProxy.web(req, res, options);
